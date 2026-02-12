@@ -1,7 +1,14 @@
-stagit
-------
+stagithub
+---------
 
-static git page generator.
+Static git page generator with GitHub-style UI.
+
+Based on stagit by Hiltjo Posthuma (https://git.codemadness.org/stagit/)
+
+This fork adds GitHub-inspired styling and enhanced features:
+- Markdown rendering support
+- Directory hierarchy visualization in file tree
+- Improved GitHub-like CSS styling
 
 It generates static HTML pages for a git repository.
 
@@ -85,7 +92,7 @@ Set clone url for a directory of repos
 	#!/bin/sh
 	cd "$dir"
 	for i in *; do
-		test -d "$i" && echo "git://git.codemadness.org/$i" > "$i/url"
+		test -d "$i" && echo "https://github.com/nanikasheila/$i" > "$i/url"
 	done
 
 
@@ -122,7 +129,7 @@ git post-receive hook (repo/.git/hooks/post-receive):
 Create .tar.gz archives by tag
 ------------------------------
 	#!/bin/sh
-	name="stagit"
+	name="stagithub"
 	mkdir -p archives
 	git tag -l | while read -r t; do
 		f="archives/${name}-$(echo "${t}" | tr '/' '_').tar.gz"
@@ -144,6 +151,9 @@ Features
 - Show file tree with linkable line numbers.
 - Show references: local branches and tags.
 - Detect README and LICENSE file from HEAD and link it as a webpage.
+- Markdown rendering for README and other .md files.
+- Directory hierarchy visualization in file tree.
+- GitHub-inspired UI styling.
 - Detect submodules (.gitmodules file) from HEAD and link it as a webpage.
 - Atom feed log (atom.xml).
 - Make index page for multiple repositories with stagit-index.

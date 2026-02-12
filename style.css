@@ -1,106 +1,688 @@
+/* ==========================================================================
+   stagit GitHub-inspired theme (light/dark auto)
+   Purpose: GitHub Primer カラーシステムに基づいた可読性の高いデザイン
+   Features: 自動ダークモード、手動切り替え、レスポンシブ、アクセシビリティ
+   ========================================================================== */
+
+/* =========
+   1) Base tokens - GitHub Primer Colors
+   ========= */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+               Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  /* GitHub Primer Light */
+  --bg: #ffffff;
+  --bg-canvas: #f6f8fa;
+  --bg-overlay: #ffffff;
+  --text: #24292f;
+  --text-secondary: #57606a;
+  --text-tertiary: #6e7781;
+  --border: #d0d7de;
+  --border-muted: #d8dee4;
+  --link: #0969da;
+  --link-hover: #0550ae;
+  --accent: #0969da;
+  --accent-emphasis: #0969da;
+
+  /* Semantic colors */
+  --success: #1a7f37;
+  --success-emphasis: #2da44e;
+  --attention: #9a6700;
+  --attention-emphasis: #bf8700;
+  --danger: #cf222e;
+  --danger-emphasis: #a40e26;
+  --done: #8250df;
+
+  /* Diff colors - GitHub style */
+  --add-bg: #dafbe1;
+  --add-border: #2da44e;
+  --add-text: #0e3e1b;
+  --add-fg: #116329;
+  --del-bg: #ffebe9;
+  --del-border: #cf222e;
+  --del-text: #5c0a11;
+  --del-fg: #82071e;
+  --meta-bg: #fff8c5;
+  --meta-border: #d4a72c;
+  --meta-text: #4d2d00;
+
+  /* Code / selection */
+  --code-bg: #f6f8fa;
+  --code-border: #d0d7de;
+  --selection: rgba(84, 174, 255, 0.4);
+
+  /* Shadows */
+  --shadow-small: 0 1px 0 rgba(27, 31, 36, 0.04);
+  --shadow-medium: 0 3px 6px rgba(140, 149, 159, 0.15);
+  --shadow-large: 0 8px 24px rgba(140, 149, 159, 0.2);
+  --shadow-floating: 0 6px 16px rgba(27, 31, 36, 0.15);
+
+  --radius-small: 6px;
+  --radius-medium: 8px;
+  --container: 1280px;
+}
+
+/* Dark mode - GitHub Primer Dark */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --bg-canvas: #010409;
+    --bg-overlay: #161b22;
+    --text: #c9d1d9;
+    --text-secondary: #8b949e;
+    --text-tertiary: #6e7681;
+    --border: #30363d;
+    --border-muted: #21262d;
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
+    --accent: #58a6ff;
+    --accent-emphasis: #1f6feb;
+
+    --success: #3fb950;
+    --success-emphasis: #238636;
+    --attention: #d29922;
+    --attention-emphasis: #9e6a03;
+    --danger: #f85149;
+    --danger-emphasis: #da3633;
+    --done: #a371f7;
+
+    --add-bg: rgba(46, 160, 67, 0.15);
+    --add-border: #3fb950;
+    --add-text: #aff5b4;
+    --add-fg: #7ee787;
+    --del-bg: rgba(248, 81, 73, 0.15);
+    --del-border: #f85149;
+    --del-text: #ffdcd7;
+    --del-fg: #ffa198;
+    --meta-bg: rgba(187, 128, 9, 0.15);
+    --meta-border: #d29922;
+    --meta-text: #f8e3a1;
+
+    --code-bg: #161b22;
+    --code-border: #30363d;
+    --selection: rgba(56, 139, 253, 0.4);
+
+    --shadow-small: 0 0 transparent;
+    --shadow-medium: 0 3px 6px rgba(0, 0, 0, 0.25);
+    --shadow-large: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --shadow-floating: 0 6px 16px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Manual theme override */
+.theme-dark {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --bg-canvas: #010409;
+  --bg-overlay: #161b22;
+  --text: #c9d1d9;
+  --text-secondary: #8b949e;
+  --border: #30363d;
+  --link: #58a6ff;
+  --link-hover: #79c0ff;
+}
+.theme-light {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-canvas: #f6f8fa;
+  --bg-overlay: #ffffff;
+  --text: #24292f;
+  --text-secondary: #57606a;
+  --border: #d0d7de;
+  --link: #0969da;
+  --link-hover: #0550ae;
+}
+
+/* =========
+   2) Document base
+   ========= */
+html {
+  color-scheme: light dark;
+  -webkit-text-size-adjust: 100%;
+  font-size: 14px;
+}
 body {
-	color: #000;
-	background-color: #fff;
-	font-family: monospace;
+  margin: 0;
+  background: var(--bg-canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  font-size: 14px;
 }
 
-h1, h2, h3, h4, h5, h6 {
-	font-size: 1em;
-	margin: 0;
+::selection { background: var(--selection); }
+
+/* コンテナ */
+.container, .wrap, #content, body > div {
+  max-width: var(--container);
+  margin-inline: auto;
+  padding-inline: 24px;
 }
 
-img, h1, h2 {
-	vertical-align: middle;
+/* 見出し */
+h1, h2, h3 {
+  line-height: 1.25;
+  margin: 0 0 16px;
+  font-weight: 600;
+}
+h1 { font-size: 32px; }
+h2 { font-size: 24px; }
+h3 { font-size: 20px; color: var(--text-secondary); }
+
+/* リンク */
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover, a:focus {
+  color: var(--link-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-img {
-	border: 0;
+/* =====
+   3) Header / navbar - GitHub style
+   ===== */
+header, .header, .repo-header {
+  background: var(--bg-canvas);
+  /*border-bottom: 1px solid var(--border);*/
+  padding: 16px 0 0 0;
 }
 
-a:target {
-	background-color: #ccc;
+.repo-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
-a.d,
-a.h,
-a.i,
-a.line {
-	text-decoration: none;
+.repo-title img {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-small);
+  transition: opacity 0.2s;
 }
 
-#blob a {
-	color: #777;
+.repo-title a:hover img {
+  opacity: 0.7;
 }
 
-#blob a:hover {
-	color: blue;
-	text-decoration: none;
+.repo-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
 }
 
-table thead td {
-	font-weight: bold;
+.repo-title .desc {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  margin-left: 8px;
 }
 
-table td {
-	padding: 0 0.4em;
+/* =====
+   4) Tables - GitHub style
+   ===== */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--radius-small);
+  overflow: hidden;
+  margin: 16px 0;
 }
 
-#content table td {
-	vertical-align: top;
-	white-space: nowrap;
+thead th {
+  background: var(--bg-canvas);
+  color: var(--text-secondary);
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
-#branches tr:hover td,
-#tags tr:hover td,
-#index tr:hover td,
-#log tr:hover td,
-#files tr:hover td {
-	background-color: #eee;
+tbody td {
+  padding: 8px 16px;
+  vertical-align: middle;
+  border-top: 1px solid var(--border);
 }
 
-#index tr td:nth-child(2),
-#tags tr td:nth-child(3),
-#branches tr td:nth-child(3),
-#log tr td:nth-child(2) {
-	white-space: normal;
+tbody tr:first-child td {
+  border-top: none;
 }
 
-td.num {
-	text-align: right;
+tbody tr:hover {
+  background: var(--bg-canvas);
 }
 
-.desc {
-	color: #777;
+/* 日付・ハッシュ等の細字 */
+td.meta, td.date, td.time, td.hash, .meta {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
-hr {
-	border: 0;
-	border-top: 1px solid #777;
-	height: 1px;
+/* レスポンシブ */
+@media (max-width: 768px) {
+  td, th { font-size: 12px; padding: 6px 12px; }
+  .hide-sm { display: none; }
+}
+
+/* =====
+   5) Panels / boxes（README, LICENSE, refsなど）
+   ===== */
+section, .panel, .box, .content {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-1);
+  margin-block: 16px;
+}
+
+/* =====
+   6) Code / file view / diff - GitHub style
+   ===== */
+pre, code, tt, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+code {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-small);
+  padding: 2px 6px;
 }
 
 pre {
-	font-family: monospace;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-small);
+  padding: 16px;
+  overflow: auto;
+  margin: 16px 0;
+  line-height: 1.45;
 }
 
-pre a.h {
-	color: #00a;
+pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
 }
 
-.A,
-span.i,
-pre a.i {
-	color: #070;
+/* 行番号付きのテーブル（stagit の file view / diff でよく出る） */
+table.blob { border: 1px solid var(--border); background: var(--bg); }
+table.blob td {
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+}
+table.blob td.lno {
+  user-select: none;
+  width: 1%; white-space: nowrap;
+  color: var(--muted);
+  background: var(--bg-elev);
+  padding-inline: 10px;
+}
+table.blob td.code {
+  padding-left: 12px;
 }
 
-.D,
-span.d,
-pre a.d {
-	color: #e00;
+/* diff 行ごとの色付け - GitHub style */
+.add, .ins, tr.add td, tr.ins td, a.i, span.i {
+  background: var(--add-bg) !important;
+  color: var(--add-fg) !important;
 }
 
-pre a.h:hover,
-pre a.i:hover,
-pre a.d:hover {
-	text-decoration: none;
+.del, .rem, tr.del td, tr.rem td, a.d, span.d {
+  background: var(--del-bg) !important;
+  color: var(--del-fg) !important;
+}
+
+.meta, .hunk, tr.meta td, tr.hunk td, a.h, span.h {
+  background: var(--meta-bg) !important;
+  color: var(--meta-text) !important;
+}
+
+/* 大きすぎる diff の抑制表示 */
+.notice, .warning {
+  background: var(--meta-bg);
+  border: 1px dashed var(--meta-border);
+  color: var(--meta-text);
+  padding: 10px 12px; border-radius: 6px;
+}
+
+/* =====
+   7) Badges, tags, refs
+   ===== */
+.badge, .tag, .ref {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-size: .85em;
+  margin-right: 6px;
+}
+
+/* =====
+   8) Navigation - GitHub underline tabs
+   ===== */
+.nav, .repo-nav {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.nav ul, .nav__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 0;
+}
+
+.nav__item {
+  margin: 0;
+}
+
+.nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  color: var(--text);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-weight: 400;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.nav__link:hover {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom-color: var(--border-muted);
+}
+
+.nav__link[aria-current="page"] {
+  border-bottom-color: var(--accent-emphasis);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.nav__icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+
+.nav__text {
+  font-size: 14px;
+}
+
+/* =====
+   9) Footer
+   ===== */
+footer, .footer, #footer {
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding: 24px 0;
+  margin-top: 24px;
+  text-align: center;
+}
+
+/* =====
+   10) Utilities
+   ===== */
+hr {
+  border: 0; height: 1px; background: var(--border);
+  margin-block: 18px;
+}
+.small { font-size: .9em; color: var(--muted); }
+.right { text-align: right; }
+.center { text-align: center; }
+.nowrap { white-space: nowrap; }
+
+/* 印刷適性 */
+@media print {
+  a { color: black; text-decoration: none; }
+  table { box-shadow: none; }
+  header, footer { box-shadow: none; }
+}
+
+/* Clone URL row */
+.url .clone-url {
+  width: min(600px, 80%);
+  padding: 5px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg-canvas);
+  color: var(--text);
+}
+
+.url .copy-btn {
+  padding: 5px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.url .copy-btn:hover {
+  background: var(--bg-canvas);
+  border-color: var(--text-secondary);
+}
+
+/* --- Icons in navigation --- */
+.nav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;             /* アイコンと文字の間 */
+}
+
+.nav__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-block;
+  vertical-align: middle;
+  color: currentColor;  /* fill=currentColor と連動 */
+}
+
+/* hover 時に色味が少し強くなる */
+.nav__link:hover .nav__icon,
+.nav__link:focus .nav__icon {
+  filter: brightness(1.05);
+}
+
+.filename{
+  font-size: 12px;
+  padding-left: 8px;
+  color: var(--text-secondary);
+}
+
+/* =====
+   Breadcrumb navigation
+   ===== */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  list-style: none;
+  margin: 0;
+}
+
+.breadcrumb li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.breadcrumb li:not(:last-child)::after {
+  content: "/";
+  color: var(--text-tertiary);
+}
+
+.breadcrumb a {
+  color: var(--link);
+}
+
+.breadcrumb a:hover {
+  text-decoration: underline;
+}
+
+/* =====
+   Theme toggle button
+   ===== */
+#theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 24px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition: all 0.2s;
+  box-shadow: var(--shadow-medium);
+}
+
+#theme-toggle:hover {
+  background: var(--bg-canvas);
+  border-color: var(--text-secondary);
+  transform: scale(1.05);
+}
+
+/* =====
+   File search
+   ===== */
+.file-search {
+  margin: 16px 0;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+#file-search {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--bg-canvas);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+}
+
+#file-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+#file-search::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* =====
+   File type icons
+   ===== */
+.file-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.file-icon-dir {
+  color: var(--accent);
+}
+
+.file-icon-file {
+  color: var(--text-secondary);
+}
+
+/* Log table: add/del stats colors */
+.add-stat {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.del-stat {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* File tree indentation */
+.tree-indent {
+  display: inline-block;
+  width: 20px;
+  margin-left: 4px;
+  border-left: 1px solid var(--border-muted);
+  height: 1em;
+  vertical-align: middle;
+}
+
+/* Directory path in file list */
+.dirname {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+/* Directory toggle */
+.dir-row {
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-row:hover {
+  background: var(--bg-canvas) !important;
+}
+
+.dir-toggle {
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: transform 0.2s;
+}
+
+.dirname-clickable {
+  font-weight: 600;
+  color: var(--text);
 }

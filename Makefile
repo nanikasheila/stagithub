@@ -13,7 +13,7 @@ LIBGIT_LIB = -L/usr/local/lib -lgit2
 
 # use system flags.
 STAGIT_CFLAGS = ${LIBGIT_INC} ${CFLAGS}
-STAGIT_LDFLAGS = ${LIBGIT_LIB} ${LDFLAGS}
+STAGIT_LDFLAGS = ${LIBGIT_LIB} ${LDFLAGS} -lmd4c-html -lmd4c
 STAGIT_CPPFLAGS = -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE -D_BSD_SOURCE
 
 SRC = \
@@ -47,7 +47,7 @@ all: ${BIN}
 	${CC} -o $@ ${LDFLAGS}
 
 .c.o:
-	${CC} -o $@ -c $< ${STAGIT_CFLAGS} ${STAGIT_CPPFLAGS}
+	${CC} -o $@ -c $< ${STAGIT_CFLAGS} ${STAGIT_CPPFLAGS} -DWITH_MD4C
 
 dist:
 	rm -rf ${NAME}-${VERSION}

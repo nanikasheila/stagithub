@@ -16,6 +16,16 @@ static char description[255] = "Repositories";
 static char *name = "";
 static char owner[255];
 
+/* 追加：README 候補（順に優先）*/
+static const char *readme_candidates[] = {
+    "HEAD:README.md",
+    "HEAD:README.markdown",
+    "HEAD:README.mdown",
+    "HEAD:README.mkd",
+    "HEAD:README"
+};
+static const size_t n_readme_candidates = sizeof(readme_candidates)/sizeof(readme_candidates[0]);
+
 void
 joinpath(char *buf, size_t bufsiz, const char *path, const char *path2)
 {
@@ -66,17 +76,36 @@ writeheader(FILE *fp)
 	fputs("<!DOCTYPE html>\n"
 		"<html>\n<head>\n"
 		"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n"
+		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
 		"<title>", fp);
 	xmlencode(fp, description, strlen(description));
 	fprintf(fp, "</title>\n<link rel=\"icon\" type=\"image/png\" href=\"%sfavicon.png\" />\n", relpath);
 	fprintf(fp, "<link rel=\"stylesheet\" type=\"text/css\" href=\"%sstyle.css\" />\n", relpath);
 	fputs("</head>\n<body>\n", fp);
-	fprintf(fp, "<table>\n<tr><td><img src=\"%slogo.png\" alt=\"\" width=\"32\" height=\"32\" /></td>\n"
-	        "<td><span class=\"desc\">", relpath);
+	
+	/* Theme toggle button */
+	fputs("<button id=\"theme-toggle\" aria-label=\"Toggle dark mode\" title=\"Toggle theme\">🌓</button>\n", fp);
+	
+	/* Header */
+	fputs("<header class=\"repo-header\"><div class=\"container\">\n", fp);
+	fputs("<div class=\"repo-title\">", fp);
+	fprintf(fp, "<img src=\"%slogo.png\" alt=\"\" width=\"24\" height=\"24\" />", relpath);
+	fputs("<h1>", fp);
 	xmlencode(fp, description, strlen(description));
-	fputs("</span></td></tr><tr><td></td><td>\n"
-		"</td></tr>\n</table>\n<hr/>\n<div id=\"content\">\n"
-		"<table id=\"index\"><thead>\n"
+	fputs("</h1>", fp);
+	fputs("<span class=\"desc\">Git Repositories</span>", fp);
+	fputs("</div>\n", fp);
+	fputs("</div></header>\n", fp);
+	
+	/* Main content wrapper */
+	fputs("<main><div id=\"content\" class=\"container\">\n", fp);
+	
+	/* Search box */
+	fputs("<div class=\"file-search\">\n", fp);
+	fputs("<input type=\"search\" id=\"repo-search\" placeholder=\"Find repository...\" aria-label=\"Search repositories\" />\n", fp);
+	fputs("</div>\n", fp);
+	
+	fputs("<table id=\"index\"><thead>\n"
 		"<tr><td><b>Name</b></td><td><b>Description</b></td><td><b>Owner</b></td>"
 		"<td><b>Last commit</b></td></tr>"
 		"</thead><tbody>\n", fp);
@@ -85,7 +114,55 @@ writeheader(FILE *fp)
 void
 writefooter(FILE *fp)
 {
-	fputs("</tbody>\n</table>\n</div>\n</body>\n</html>\n", fp);
+	fputs("</tbody>\n</table>\n</div></main>\n", fp);
+	
+	/* JavaScript for theme toggle and search */
+	fputs("<script>\n"
+		"/* Theme toggle */\n"
+		"(function(){\n"
+		"  var toggle=document.getElementById('theme-toggle');\n"
+		"  var body=document.body;\n"
+		"  var theme=localStorage.getItem('theme');\n"
+		"  if(theme){body.className=theme;}\n"
+		"  if(toggle){\n"
+		"    toggle.addEventListener('click',function(){\n"
+		"      var current=body.className||'';\n"
+		"      var next=current==='theme-dark'?'theme-light':'theme-dark';\n"
+		"      body.className=next;\n"
+		"      localStorage.setItem('theme',next);\n"
+		"    });\n"
+		"  }\n"
+		"})();\n"
+		"/* Repository search */\n"
+		"(function(){\n"
+		"  var input=document.getElementById('repo-search');\n"
+		"  var table=document.getElementById('index');\n"
+		"  if(!input||!table)return;\n"
+		"  var rows=table.querySelectorAll('tbody tr');\n"
+		"  input.addEventListener('input',function(){\n"
+		"    var filter=input.value.toLowerCase();\n"
+		"    for(var i=0;i<rows.length;i++){\n"
+		"      var nameCell=rows[i].querySelector('td:first-child');\n"
+		"      if(!nameCell)continue;\n"
+		"      var text=nameCell.textContent||nameCell.innerText;\n"
+		"      if(text.toLowerCase().indexOf(filter)>-1){\n"
+		"        rows[i].style.display='';\n"
+		"      }else{\n"
+		"        rows[i].style.display='none';\n"
+		"      }\n"
+		"    }\n"
+		"  });\n"
+		"  /* Keyboard shortcut: / to focus search */\n"
+		"  document.addEventListener('keydown',function(e){\n"
+		"    if(e.key==='/'&&document.activeElement!==input){\n"
+		"      e.preventDefault();\n"
+		"      input.focus();\n"
+		"    }\n"
+		"  });\n"
+		"})();\n"
+		"</script>\n", fp);
+	
+	fputs("</body>\n</html>\n", fp);
 }
 
 int
@@ -96,6 +173,10 @@ writelog(FILE *fp)
 	git_revwalk *w = NULL;
 	git_oid id;
 	char *stripped_name = NULL, *p;
+	char readme_path[255];
+	const char *readme_link = NULL;
+	git_object *readme_obj = NULL;
+	size_t i;
 	int ret = 0;
 
 	git_revwalk_new(&w, repo);
@@ -117,9 +198,35 @@ writelog(FILE *fp)
 		if (!strcmp(p, ".git"))
 			*p = '\0';
 
-	fputs("<tr><td><a href=\"", fp);
-	xmlencode(fp, stripped_name, strlen(stripped_name));
-	fputs("/log.html\">", fp);
+	/* Find README file (try candidates in order) */
+	for (i = 0; i < n_readme_candidates; i++) {
+		if (!git_revparse_single(&readme_obj, repo, readme_candidates[i])) {
+			/* Extract filename from "HEAD:filename" */
+			const char *colon = strchr(readme_candidates[i], ':');
+			if (colon) {
+				readme_link = colon + 1;
+				break;
+			}
+			git_object_free(readme_obj);
+			readme_obj = NULL;
+		}
+	}
+
+	/* Repository row with icon */
+	fputs("<tr><td>", fp);
+	/* Repository icon (folder SVG) */
+	fputs("<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"currentColor\" style=\"vertical-align:middle;margin-right:6px;\" aria-hidden=\"true\">" 
+	      "<path d=\"M4 5.5A1.5 1.5 0 0 1 5.5 4h4.38c.4 0 .78.16 1.06.44l1.12 1.12c.28.28.66.44 1.06.44H18.5A1.5 1.5 0 0 1 20 7.5v10A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-12Z\"/>" 
+	      "</svg>", fp);
+	
+	/* Link to log.html or README */
+	if (readme_link) {
+		fprintf(fp, "<a href=\"%s/file/", stripped_name);
+		xmlencode(fp, readme_link, strlen(readme_link));
+		fputs(".html\">", fp);
+	} else {
+		fprintf(fp, "<a href=\"%s/log.html\">", stripped_name);
+	}
 	xmlencode(fp, stripped_name, strlen(stripped_name));
 	fputs("</a></td><td>", fp);
 	xmlencode(fp, description, strlen(description));
@@ -128,8 +235,10 @@ writelog(FILE *fp)
 	fputs("</td><td>", fp);
 	if (author)
 		printtimeshort(fp, &(author->when));
-	fputs("</td></tr>", fp);
+	fputs("</td></tr>\n", fp);
 
+	if (readme_obj)
+		git_object_free(readme_obj);
 	git_commit_free(commit);
 err:
 	git_revwalk_free(w);
