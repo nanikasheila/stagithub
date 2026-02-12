@@ -31,6 +31,169 @@ md4c_buffer_cb(const MD_CHAR *data, MD_SIZE size, void *ud)
 	buf->size += size;
 }
 
+/* Convert mermaid code blocks and write to buffer */
+static void
+convert_mermaid_blocks_to_buffer(struct md_buffer *out, const char *html, size_t len)
+{
+	size_t i = 0;
+	while (i < len) {
+		/* Look for class="language-mermaid" */
+		if (i + 23 < len && 
+		    !strncmp(&html[i], "class=\"language-mermaid\"", 24)) {
+			/* Back up to find <pre><code  */
+			size_t start = i;
+			while (start > 0 && html[start] != '<') start--;
+			
+			/* Check if we found <code */
+			if (start > 0 && start + 5 < len && !strncmp(&html[start], "<code ", 6)) {
+				/* Back up more to find <pre> */
+				size_t pre_start = start - 1;
+				while (pre_start > 0 && html[pre_start] != '<') pre_start--;
+				
+				if (pre_start > 0 && !strncmp(&html[pre_start], "<pre>", 5)) {
+					/* Copy everything before <pre> */
+					if (out->size + pre_start > out->capacity) {
+						size_t new_cap = out->capacity ? out->capacity * 2 : 4096;
+						while (new_cap < out->size + pre_start) new_cap *= 2;
+						out->data = realloc(out->data, new_cap);
+						if (!out->data) err(1, "realloc");
+						out->capacity = new_cap;
+					}
+					memcpy(out->data + out->size, html, pre_start);
+					out->size += pre_start;
+					
+					/* Write <pre class="mermaid"> */
+					const char *replacement = "<pre class=\"mermaid\">";
+					size_t repl_len = strlen(replacement);
+					if (out->size + repl_len > out->capacity) {
+						size_t new_cap = out->capacity * 2;
+						while (new_cap < out->size + repl_len) new_cap *= 2;
+						out->data = realloc(out->data, new_cap);
+						if (!out->data) err(1, "realloc");
+						out->capacity = new_cap;
+					}
+					memcpy(out->data + out->size, replacement, repl_len);
+					out->size += repl_len;
+					
+					/* Skip to after the closing > of <code class="language-mermaid"> */
+					i = i + 24; /* skip class="language-mermaid" */
+					while (i < len && html[i] != '>') i++;
+					i++; /* skip the > */
+					
+					/* Copy content until </code></pre> */
+					size_t content_start = i;
+					while (i + 13 < len) {
+						if (!strncmp(&html[i], "</code></pre>", 13)) {
+							/* Copy the content */
+							size_t content_len = i - content_start;
+							if (out->size + content_len > out->capacity) {
+								size_t new_cap = out->capacity * 2;
+								while (new_cap < out->size + content_len) new_cap *= 2;
+								out->data = realloc(out->data, new_cap);
+								if (!out->data) err(1, "realloc");
+								out->capacity = new_cap;
+							}
+							memcpy(out->data + out->size, &html[content_start], content_len);
+							out->size += content_len;
+							
+							/* Write </pre> */
+							const char *end_tag = "</pre>";
+							size_t end_len = strlen(end_tag);
+							if (out->size + end_len > out->capacity) {
+								size_t new_cap = out->capacity * 2;
+								out->data = realloc(out->data, new_cap);
+								if (!out->data) err(1, "realloc");
+								out->capacity = new_cap;
+							}
+							memcpy(out->data + out->size, end_tag, end_len);
+							out->size += end_len;
+							
+							i += 13; /* skip </code></pre> */
+							html = &html[i];
+							len -= i;
+							i = 0;
+							break;
+						}
+						i++;
+					}
+					continue;
+				}
+			}
+		}
+		
+		/* Add character to buffer */
+		size_t needed = out->size + 1;
+		if (needed > out->capacity) {
+			size_t new_cap = out->capacity ? out->capacity * 2 : 4096;
+			while (new_cap < needed) new_cap *= 2;
+			out->data = realloc(out->data, new_cap);
+			if (!out->data) err(1, "realloc");
+			out->capacity = new_cap;
+		}
+		out->data[out->size++] = html[i++];
+	}
+}
+
+/* Convert mermaid code blocks to mermaid divs */
+static void
+convert_mermaid_blocks(FILE *fp, const char *html, size_t len)
+{
+	size_t i = 0;
+	size_t last_write = 0;
+	
+	while (i < len) {
+		/* Look for class="language-mermaid" */
+		if (i + 23 < len && 
+		    !strncmp(&html[i], "class=\"language-mermaid\"", 24)) {
+			/* Back up to find <pre><code  */
+			size_t start = i;
+			while (start > 0 && html[start] != '<') start--;
+			
+			/* Check if we found <code */
+			if (start > 0 && start + 5 < len && !strncmp(&html[start], "<code ", 6)) {
+				/* Back up more to find <pre> */
+				size_t pre_start = start - 1;
+				while (pre_start > 0 && html[pre_start] != '<') pre_start--;
+				
+				if (pre_start > 0 && !strncmp(&html[pre_start], "<pre>", 5)) {
+					/* Write everything before <pre> */
+					fwrite(&html[last_write], 1, pre_start - last_write, fp);
+					
+					/* Write <pre class="mermaid"> */
+					fputs("<pre class=\"mermaid\">", fp);
+					
+					/* Skip to after the closing > of <code class="language-mermaid"> */
+					i = i + 24; /* skip class="language-mermaid" */
+					while (i < len && html[i] != '>') i++;
+					i++; /* skip the > */
+					
+					/* Copy content until </code></pre> */
+					size_t content_start = i;
+					while (i + 13 < len) {
+						if (!strncmp(&html[i], "</code></pre>", 13)) {
+							/* Write the content */
+							fwrite(&html[content_start], 1, i - content_start, fp);
+							/* Write </pre> */
+							fputs("</pre>", fp);
+							i += 13; /* skip </code></pre> */
+							last_write = i;
+							break;
+						}
+						i++;
+					}
+					continue;
+				}
+			}
+		}
+		i++;
+	}
+	
+	/* Write any remaining content */
+	if (last_write < len) {
+		fwrite(&html[last_write], 1, len - last_write, fp);
+	}
+}
+
 /* Convert relative .md links to .md.html in HTML */
 static void
 convert_md_links(FILE *fp, const char *html, size_t len)
@@ -118,6 +281,7 @@ static int
 render_markdown_with_links(FILE *fp, const char *buf, size_t len)
 {
 	struct md_buffer output = {0};
+	struct md_buffer temp = {0};
 	unsigned parser_flags = MD_DIALECT_GITHUB;
 #ifdef STAGIT_MD_NOHTML
 	parser_flags |= MD_FLAG_NOHTML;
@@ -129,8 +293,31 @@ render_markdown_with_links(FILE *fp, const char *buf, size_t len)
 	                  parser_flags, renderer_flags);
 	
 	if (ret == 0 && output.data && output.size > 0) {
-		/* Convert .md links to .md.html and write to file */
-		convert_md_links(fp, output.data, output.size);
+		/* Directly apply both conversions using a temporary FILE* */
+		FILE *temp_fp = tmpfile();
+		if (temp_fp) {
+			/* First convert mermaid blocks */
+			convert_mermaid_blocks(temp_fp, output.data, output.size);
+			
+			/* Get the size and rewind */
+			fseek(temp_fp, 0, SEEK_END);
+			long temp_size = ftell(temp_fp);
+			fseek(temp_fp, 0, SEEK_SET);
+			
+			/* Read into temp buffer */
+			if (temp_size > 0) {
+				temp.data = malloc(temp_size);
+				if (temp.data) {
+					temp.size = fread(temp.data, 1, temp_size, temp_fp);
+					
+					/* Then convert .md links to .md.html and write to final output */
+					convert_md_links(fp, temp.data, temp.size);
+					
+					free(temp.data);
+				}
+			}
+			fclose(temp_fp);
+		}
 	}
 	
 	free(output.data);
@@ -150,7 +337,8 @@ render_markdown(FILE *fp, const char *buf, size_t len)
 	                  parser_flags, renderer_flags);
 	
 	if (ret == 0 && output.data && output.size > 0) {
-		fwrite(output.data, 1, output.size, fp);
+		/* Convert mermaid blocks and write to output */
+		convert_mermaid_blocks(fp, output.data, output.size);
 	}
 	
 	free(output.data);

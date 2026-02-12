@@ -83,6 +83,11 @@ writeheader(FILE *fp)
 	xmlencode(fp, description, strlen(description));
 	fprintf(fp, "</title>\n<link rel=\"icon\" type=\"image/png\" href=\"%sfavicon.png\" />\n", relpath);
 	fprintf(fp, "<link rel=\"stylesheet\" type=\"text/css\" href=\"%sstyle.css\" />\n", relpath);
+	/* mermaid.js for diagram rendering */
+	fputs("<script type=\"module\">\n", fp);
+	fputs("import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n", fp);
+	fputs("mermaid.initialize({ startOnLoad: true, theme: 'default' });\n", fp);
+	fputs("</script>\n", fp);
 	fputs("</head>\n<body>\n", fp);
 	
 	/* Theme toggle button */

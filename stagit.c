@@ -471,6 +471,11 @@ writeheader(FILE *fp, const char *title)
 	fputs("<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css\" media=\"(prefers-color-scheme: light)\" />\n", fp);
 	fputs("<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css\" media=\"(prefers-color-scheme: dark)\" />\n", fp);
 	fputs("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js\"></script>\n", fp);
+	/* mermaid.js for diagram rendering */
+	fputs("<script type=\"module\">\n", fp);
+	fputs("import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n", fp);
+	fputs("mermaid.initialize({ startOnLoad: true, theme: 'default' });\n", fp);
+	fputs("</script>\n", fp);
 	fputs("</head>\n<body>\n", fp);
 	
 	/* Theme toggle button */
