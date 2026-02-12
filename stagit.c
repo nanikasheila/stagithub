@@ -16,6 +16,138 @@
 
 #include "compat.h"
 
+#ifdef WITH_MD4C
+#include <md4c-html.h>
+
+/* Buffer for capturing md4c output */
+struct md_buffer {
+    char *data;
+    size_t size;
+    size_t capacity;
+};
+
+/* md4c output callback for buffer */
+static void md4c_buffer_cb(const MD_CHAR *data, MD_SIZE size, void *ud)
+{
+    struct md_buffer *buf = (struct md_buffer *)ud;
+    size_t needed = buf->size + size;
+    
+    if (needed > buf->capacity) {
+        size_t new_cap = buf->capacity ? buf->capacity * 2 : 4096;
+        while (new_cap < needed) new_cap *= 2;
+        buf->data = realloc(buf->data, new_cap);
+        if (!buf->data) err(1, "realloc");
+        buf->capacity = new_cap;
+    }
+    
+    memcpy(buf->data + buf->size, data, size);
+    buf->size += size;
+}
+
+/* Convert relative .md links to .md.html in HTML */
+static void convert_md_links(FILE *fp, const char *html, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        /* Look for href=" */
+        if (i + 6 < len && 
+            html[i] == 'h' && html[i+1] == 'r' && html[i+2] == 'e' && 
+            html[i+3] == 'f' && html[i+4] == '=' && html[i+5] == '"') {
+            
+            fwrite(&html[i], 1, 6, fp); /* write href=" */
+            i += 6;
+            
+            /* Capture the URL until the closing " */
+            size_t url_start = i;
+            while (i < len && html[i] != '"') i++;
+            size_t url_len = i - url_start;
+            
+            /* Check if it's a relative .md link */
+            if (url_len > 3 && 
+                html[url_start] != '/' && 
+                html[url_start] != 'h' && /* not http */
+                html[url_start] != '#') { /* not anchor */
+                
+                /* Check for .md extension */
+                const char *url = &html[url_start];
+                const char *ext = NULL;
+                for (size_t j = 0; j < url_len; j++) {
+                    if (url[j] == '.') ext = &url[j];
+                }
+                
+                if (ext && url_len - (ext - url) >= 3 && url_len - (ext - url) <= 9) {
+                    /* Check various markdown extensions */
+                    int is_md = 0;
+                    if (!strncasecmp(ext, ".md\"", 4) || 
+                        !strncasecmp(ext, ".md#", 4) ||
+                        !strncasecmp(ext, ".markdown\"", 10) ||
+                        !strncasecmp(ext, ".markdown#", 10)) {
+                        is_md = 1;
+                    }
+                    
+                    if (is_md) {
+                        /* Write URL up to the extension */
+                        fwrite(url, 1, ext - url, fp);
+                        /* Write extension + .html */
+                        size_t ext_len = 0;
+                        while (ext[ext_len] && ext[ext_len] != '"' && ext[ext_len] != '#') 
+                            ext_len++;
+                        fwrite(ext, 1, ext_len, fp);
+                        fputs(".html", fp);
+                        /* Write rest of URL (anchor, etc) */
+                        fwrite(&ext[ext_len], 1, url_len - (ext - url) - ext_len, fp);
+                    } else {
+                        fwrite(url, 1, url_len, fp);
+                    }
+                } else {
+                    fwrite(url, 1, url_len, fp);
+                }
+            } else {
+                fwrite(&html[url_start], 1, url_len, fp);
+            }
+        } else {
+            fputc(html[i], fp);
+            i++;
+        }
+    }
+}
+
+/* 拡張子で Markdown 判定（大小無視） */
+static int is_markdown_filename(const char *name)
+{
+    if (!name) return 0;
+    const char *ext = strrchr(name, '.');
+    if (!ext) return 0;
+    return !strcasecmp(ext, ".md")
+        || !strcasecmp(ext, ".markdown")
+        || !strcasecmp(ext, ".mdown")
+        || !strcasecmp(ext, ".mkd");
+}
+
+/* Markdown → HTML with link conversion */
+static int render_markdown(FILE *fp, const char *buf, size_t len)
+{
+    struct md_buffer output = {0};
+    unsigned parser_flags = MD_DIALECT_GITHUB;
+#ifdef STAGIT_MD_NOHTML
+    parser_flags |= MD_FLAG_NOHTML;
+#endif
+    unsigned renderer_flags = 0;
+    
+    /* Render to buffer first */
+    int ret = md_html((const MD_CHAR*)buf, (MD_SIZE)len, md4c_buffer_cb, &output,
+                      parser_flags, renderer_flags);
+    
+    if (ret == 0 && output.data && output.size > 0) {
+        /* Convert .md links to .md.html and write to file */
+        convert_md_links(fp, output.data, output.size);
+    }
+    
+    free(output.data);
+    return ret;
+}
+#endif /* WITH_MD4C */
+
 struct deltainfo {
 	git_patch *patch;
 
@@ -448,6 +580,7 @@ writeheader(FILE *fp, const char *title)
 	fputs("<!DOCTYPE html>\n"
 		"<html>\n<head>\n"
 		"<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\" />\n"
+		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n"
 		"<title>", fp);
 	xmlencode(fp, title, strlen(title));
 	if (title[0] && strippedname[0])
@@ -456,58 +589,271 @@ writeheader(FILE *fp, const char *title)
 	if (description[0])
 		fputs(" - ", fp);
 	xmlencode(fp, description, strlen(description));
-	fprintf(fp, "</title>\n<link rel=\"icon\" type=\"image/png\" href=\"%sfavicon.png\" />\n", relpath);
+	/* Asset files are in parent directory */
+	fputs("</title>\n", fp);
+	fprintf(fp, "<link rel=\"icon\" type=\"image/png\" href=\"%s../favicon.png\" />\n", relpath);
 	fprintf(fp, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"%s Atom Feed\" href=\"%satom.xml\" />\n",
 		name, relpath);
 	fprintf(fp, "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"%s Atom Feed (tags)\" href=\"%stags.xml\" />\n",
 		name, relpath);
-	fprintf(fp, "<link rel=\"stylesheet\" type=\"text/css\" href=\"%sstyle.css\" />\n", relpath);
-	fputs("</head>\n<body>\n<table><tr><td>", fp);
-	fprintf(fp, "<a href=\"../%s\"><img src=\"%slogo.png\" alt=\"\" width=\"32\" height=\"32\" /></a>",
+	fprintf(fp, "<link rel=\"stylesheet\" type=\"text/css\" href=\"%s../style.css\" />\n", relpath);
+	/* highlight.js for syntax highlighting */
+	fputs("<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css\" media=\"(prefers-color-scheme: light)\" />\n", fp);
+	fputs("<link rel=\"stylesheet\" href=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css\" media=\"(prefers-color-scheme: dark)\" />\n", fp);
+	fputs("<script src=\"https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js\"></script>\n", fp);
+	fputs("</head>\n<body>\n", fp);
+	
+	/* Theme toggle button */
+	fputs("<button id=\"theme-toggle\" aria-label=\"Toggle dark mode\" title=\"Toggle theme\">🌓</button>\n", fp);
+	
+	/* Header */
+	fputs("<header class=\"repo-header\"><div class=\"container\">\n", fp);
+	fputs("<div class=\"repo-title\">", fp);
+	fprintf(fp, "<a href=\"%s../index.html\"><img src=\"%s../logo.png\" alt=\"\" width=\"24\" height=\"24\" /></a>",
 	        relpath, relpath);
-	fputs("</td><td><h1>", fp);
+	fputs("<h1>", fp);
 	xmlencode(fp, strippedname, strlen(strippedname));
-	fputs("</h1><span class=\"desc\">", fp);
-	xmlencode(fp, description, strlen(description));
-	fputs("</span></td></tr>", fp);
-	if (cloneurl[0]) {
-		fputs("<tr class=\"url\"><td></td><td>git clone <a href=\"", fp);
-		xmlencode(fp, cloneurl, strlen(cloneurl));
-		fputs("\">", fp);
-		xmlencode(fp, cloneurl, strlen(cloneurl));
-		fputs("</a></td></tr>", fp);
+	fputs("</h1>", fp);
+	if (description[0]) {
+		fputs("<span class=\"desc\">", fp);
+		xmlencode(fp, description, strlen(description));
+		fputs("</span>", fp);
 	}
-	fputs("<tr><td></td><td>\n", fp);
-	fprintf(fp, "<a href=\"%slog.html\">Log</a> | ", relpath);
-	fprintf(fp, "<a href=\"%sfiles.html\">Files</a> | ", relpath);
-	fprintf(fp, "<a href=\"%srefs.html\">Refs</a>", relpath);
+	fputs("</div>\n", fp);
+
+	if (cloneurl[0]) {
+		fputs("<div class=\"url\" style=\"margin: 12px 0;\">", fp);
+		fputs("<input id=\"clone-url\" class=\"clone-url\" type=\"text\" readonly value=\"git clone ", fp);
+		xmlencode(fp, cloneurl, strlen(cloneurl));
+		fputs("\" /> ", fp);
+		fputs("<button id=\"copy-btn\" class=\"copy-btn\" type=\"button\" aria-label=\"Copy clone URL\">Copy</button>", fp);
+		fputs("</div>\n", fp);
+	}
+
+	/* Navigation */
+	fputs("<nav class=\"nav\"><ul class=\"nav__list\">\n", fp);
+
+	/* Log */
+	fprintf(fp,
+	"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%slog.html\">"
+	"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M12 1.75a10.25 10.25 0 1 0 0 20.5 10.25 10.25 0 0 0 0-20.5Zm0 1.5a8.75 8.75 0 1 1 0 17.5 8.75 8.75 0 0 1 0-17.5Zm-.75 3.75a.75.75 0 0 1 1.5 0v5.19l3.22 1.86a.75.75 0 0 1-.75 1.3l-3.72-2.15a.75.75 0 0 1-.37-.65V7z\"/>"
+	"</svg>"
+	"<span class=\"nav__text\">Log</span></a></li>\n", relpath);
+
+	/* Files */
+	fprintf(fp,
+	"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%sfiles.html\">"
+	"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M4 5.5A1.5 1.5 0 0 1 5.5 4h4.38c.4 0 .78.16 1.06.44l1.12 1.12c.28.28.66.44 1.06.44H18.5A1.5 1.5 0 0 1 20 7.5v10A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-12Z\"/>"
+	"</svg>"
+	"<span class=\"nav__text\">Files</span></a></li>\n", relpath);
+
+	/* Refs */
+	fprintf(fp,
+	"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%srefs.html\">"
+	"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M7 4.5A2.5 2.5 0 1 1 7 9.5 2.5 2.5 0 0 1 7 4.5Zm0 1.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm2 4.75h6.19l-2.22-2.22a.75.75 0 0 1 1.06-1.06l3.5 3.5a.75.75 0 0 1 0 1.06l-3.5 3.5a.75.75 0 1 1-1.06-1.06l2.22-2.22H9a2 2 0 0 0-2 2V19a.75.75 0 0 1-1.5 0v-6a3.5 3.5 0 0 1 3.5-3.5Z\"/>"
+	"</svg>"
+	"<span class=\"nav__text\">Refs</span></a></li>\n", relpath);
+
+	/* Submodules（存在する場合のみ） */
 	if (submodules)
-		fprintf(fp, " | <a href=\"%sfile/%s.html\">Submodules</a>",
-		        relpath, submodules);
+	fprintf(fp,
+		"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%sfile/%s.html\">"
+		"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M4.5 7A2.5 2.5 0 0 1 7 4.5h10A2.5 2.5 0 0 1 19.5 7v10A2.5 2.5 0 0 1 17 19.5H7A2.5 2.5 0 0 1 4.5 17V7Zm3 1.5h9v7h-9v-7Zm-1.5 0v7A1 1 0 0 0 7 16.5h.5v-9H7A1 1 0 0 0 6 8.5Z\"/>"
+		"</svg>"
+		"<span class=\"nav__text\">Submodules</span></a></li>\n", relpath, submodules);
+
+	/* README（存在する場合のみ） */
 	if (readme)
-		fprintf(fp, " | <a href=\"%sfile/%s.html\">README</a>",
-		        relpath, readme);
+	fprintf(fp,
+		"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%sfile/%s.html\">"
+		"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M6.5 4A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20h9A2.5 2.5 0 0 0 18 17.5v-11A2.5 2.5 0 0 0 15.5 4h-9Zm0 1.5h9A1 1 0 0 1 16.5 6.5v9.25c-.55-.3-1.2-.5-2-.5H7a3.5 3.5 0 0 0-2 .5V6.5A1 1 0 0 1 6.5 5.5Z\"/>"
+		"</svg>"
+		"<span class=\"nav__text\">README</span></a></li>\n", relpath, readme);
+
+	/* LICENSE（存在する場合のみ） */
 	if (license)
-		fprintf(fp, " | <a href=\"%sfile/%s.html\">LICENSE</a>",
-		        relpath, license);
-	fputs("</td></tr></table>\n<hr/>\n<div id=\"content\">\n", fp);
+	fprintf(fp,
+		"<li class=\"nav__item\"><a class=\"nav__link\" href=\"%sfile/%s.html\">"
+		"<svg class=\"nav__icon\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" role=\"img\" fill=\"currentColor\">"
+		"<path d=\"M12 2a6 6 0 0 1 6 6v4.59l1.3 1.3a1 1 0 0 1-1.41 1.41l-.89-.9A6.97 6.97 0 0 1 12 17a6.97 6.97 0 0 1-5-2.2l-.89.9a1 1 0 1 1-1.41-1.41L6 12.59V8a6 6 0 0 1 6-6Zm0 2A4 4 0 0 0 8 8v5.17A4.97 4.97 0 0 0 12 15c1.93 0 3.65-.55 5-1.83V8a4 4 0 0 0-4-4Z\"/>"
+		"</svg>"
+		"<span class=\"nav__text\">LICENSE</span></a></li>\n", relpath, license);
+
+	fputs("</ul></nav>\n", fp);
+	fputs("</div></header>\n", fp);
+	
+	/* Breadcrumb navigation */
+	fputs("<nav aria-label=\"Breadcrumb\" class=\"container\" style=\"padding-top:16px;\">\n", fp);
+	fputs("<ol class=\"breadcrumb\">\n", fp);
+	fprintf(fp, "<li><a href=\"%s../index.html\">Home</a></li>\n", relpath);
+	fputs("<li><span id=\"breadcrumb-page\"></span></li>\n", fp);
+	fputs("</ol>\n</nav>\n", fp);
+	
+	/* Main content wrapper */
+	fputs("<main><div id=\"content\" class=\"container\">\n", fp);
+	
+	/* JavaScript for theme toggle and clipboard */
+	fputs("<script>\n"
+		"/* Theme toggle */\n"
+		"(function(){\n"
+		"  var toggle=document.getElementById('theme-toggle');\n"
+		"  var body=document.body;\n"
+		"  var theme=localStorage.getItem('theme');\n"
+		"  if(theme){body.className=theme;}\n"
+		"  if(toggle){\n"
+		"    toggle.addEventListener('click',function(){\n"
+		"      var current=body.className||'';\n"
+		"      var next=current==='theme-dark'?'theme-light':'theme-dark';\n"
+		"      body.className=next;\n"
+		"      localStorage.setItem('theme',next);\n"
+		"    });\n"
+		"  }\n"
+		"})();\n"
+		"/* Clipboard copy */\n"
+		"(function(){\n"
+		"  var b=document.getElementById('copy-btn');\n"
+		"  var i=document.getElementById('clone-url');\n"
+		"  if(!b||!i)return;\n"
+		"  b.addEventListener('click',function(){\n"
+		"    var v=i.value;\n"
+		"    if(navigator.clipboard&&navigator.clipboard.writeText){\n"
+		"      navigator.clipboard.writeText(v).then(function(){\n"
+		"        b.textContent='Copied!';setTimeout(function(){b.textContent='Copy';},1200);\n"
+		"      });\n"
+		"    }else{\n"
+		"      i.select();\n"
+		"      try{document.execCommand('copy');b.textContent='Copied!';setTimeout(function(){b.textContent='Copy';},1200);}catch(e){}\n"
+		"      if(window.getSelection)window.getSelection().removeAllRanges();\n"
+		"    }\n"
+		"  });\n"
+		"})();\n"
+		"/* Set active page and breadcrumb */\n"
+		"(function(){\n"
+		"  var path=window.location.pathname;\n"
+		"  var filename=path.split('/').pop();\n"
+		"  var links=document.querySelectorAll('.nav__link');\n"
+		"  var breadcrumb=document.getElementById('breadcrumb-page');\n"
+		"  var pageName='';\n"
+		"  for(var i=0;i<links.length;i++){\n"
+		"    var link=links[i];\n"
+		"    if(link.getAttribute('href').indexOf(filename)>-1){\n"
+		"      link.setAttribute('aria-current','page');\n"
+		"      pageName=link.querySelector('.nav__text').textContent;\n"
+		"      break;\n"
+		"    }\n"
+		"  }\n"
+		"  if(breadcrumb&&pageName){breadcrumb.textContent=pageName;}\n"
+		"  else if(breadcrumb){breadcrumb.textContent=document.title.split(' - ')[0];}\n"
+		"})();\n"
+		"/* highlight.js initialization */\n"
+		"if(typeof hljs!=='undefined'){hljs.highlightAll();}\n"
+		"</script>\n", fp);
 }
 
 void
 writefooter(FILE *fp)
 {
-	fputs("</div>\n</body>\n</html>\n", fp);
+	fputs("</div></main>\n</body>\n</html>\n", fp);
+}
+
+void
+printfileicon(FILE *fp, const char *filename, int isdir)
+{
+	const char *ext;
+	
+	if (isdir) {
+		/* Directory icon */
+		fputs("<svg class=\"file-icon file-icon-dir\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+			"<path d=\"M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2C6.07 1.26 5.55 1 5 1H1.75Z\"></path>"
+			"</svg>", fp);
+		return;
+	}
+	
+	/* File icon based on extension */
+	ext = strrchr(filename, '.');
+	if (ext) {
+		ext++; /* skip the dot */
+		/* Code files */
+		if (!strcasecmp(ext, "c") || !strcasecmp(ext, "h") ||
+		    !strcasecmp(ext, "cpp") || !strcasecmp(ext, "cc") ||
+		    !strcasecmp(ext, "cxx") || !strcasecmp(ext, "java") ||
+		    !strcasecmp(ext, "py") || !strcasecmp(ext, "js") ||
+		    !strcasecmp(ext, "ts") || !strcasecmp(ext, "go") ||
+		    !strcasecmp(ext, "rs") || !strcasecmp(ext, "rb")) {
+			fputs("<svg class=\"file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+				"<path d=\"M4 1.75C4 .784 4.784 0 5.75 0h5.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v8.586A1.75 1.75 0 0 1 14.25 15h-9a.75.75 0 0 1 0-1.5h9a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 10 4.25V1.5H5.75a.25.25 0 0 0-.25.25v2.5a.75.75 0 0 1-1.5 0V1.75Zm-1 10.5a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1-.75-.75Zm3.75-.75a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5h-.5Z\"></path>"
+				"</svg>", fp);
+		/* Markdown */
+		} else if (!strcasecmp(ext, "md") || !strcasecmp(ext, "markdown")) {
+			fputs("<svg class=\"file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+				"<path d=\"M14.85 3c.63 0 1.15.52 1.14 1.15v7.7c0 .63-.51 1.15-1.15 1.15H1.15C.52 13 0 12.48 0 11.84V4.15C0 3.52.52 3 1.15 3ZM9 11V5H7L5.5 7 4 5H2v6h2V8l1.5 1.92L7 8v3Zm2.99.5L14.5 8H13V5h-2v3H9.5Z\"></path>"
+				"</svg>", fp);
+		/* Config files */
+		} else if (!strcasecmp(ext, "json") || !strcasecmp(ext, "xml") ||
+		           !strcasecmp(ext, "yaml") || !strcasecmp(ext, "yml") ||
+		           !strcasecmp(ext, "toml") || !strcasecmp(ext, "conf") ||
+		           !strcasecmp(ext, "cfg") || !strcasecmp(ext, "ini")) {
+			fputs("<svg class=\"file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+				"<path d=\"M9.5 1.25a3.25 3.25 0 1 1 4.22 3.1c.14.155.28.347.395.562.113.214.2.488.254.782.09.49.09 1.066.09 1.681V9.5a.75.75 0 0 1-1.5 0V7.375c0-.676 0-1.163-.08-1.565a2.583 2.583 0 0 0-.17-.522 1.78 1.78 0 0 0-.248-.363A3.25 3.25 0 0 1 9.5 1.25ZM6.25 4a3.25 3.25 0 0 0-3.226 3.575.75.75 0 0 1-1.476.236A4.75 4.75 0 0 1 6.25 2.5h.5a.75.75 0 0 1 0 1.5h-.5Z\"></path>"
+				"</svg>", fp);
+		/* Images */
+		} else if (!strcasecmp(ext, "png") || !strcasecmp(ext, "jpg") ||
+		           !strcasecmp(ext, "jpeg") || !strcasecmp(ext, "gif") ||
+		           !strcasecmp(ext, "svg") || !strcasecmp(ext, "webp")) {
+			fputs("<svg class=\"file-icon\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+				"<path d=\"M16 13.25A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25V2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75ZM1.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h.94l.03-.03 6.077-6.078a1.75 1.75 0 0 1 2.412-.06L14.5 10.31V2.75a.25.25 0 0 0-.25-.25Z\"></path>"
+				"</svg>", fp);
+		} else {
+			/* Default file icon */
+			fputs("<svg class=\"file-icon file-icon-file\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+				"<path d=\"M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z\"></path>"
+				"</svg>", fp);
+		}
+	} else {
+		/* Default file icon (no extension) */
+		fputs("<svg class=\"file-icon file-icon-file\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"currentColor\">"
+			"<path d=\"M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z\"></path>"
+			"</svg>", fp);
+	}
 }
 
 int
-writeblobhtml(FILE *fp, const git_blob *blob)
+writeblobhtml(FILE *fp, const git_blob *blob, const char *filename)
 {
 	size_t n = 0, i, prev;
 	const char *nfmt = "<a href=\"#l%d\" class=\"line\" id=\"l%d\">%7d</a> ";
 	const char *s = git_blob_rawcontent(blob);
 	git_off_t len = git_blob_rawsize(blob);
+	const char *ext, *lang = "";
+	
+	/* Detect language from file extension */
+	if (filename && (ext = strrchr(filename, '.'))) {
+		ext++; /* skip dot */
+		if (!strcasecmp(ext, "c")) lang = "language-c";
+		else if (!strcasecmp(ext, "h")) lang = "language-c";
+		else if (!strcasecmp(ext, "cpp") || !strcasecmp(ext, "cc") || 
+		         !strcasecmp(ext, "cxx")) lang = "language-cpp";
+		else if (!strcasecmp(ext, "py")) lang = "language-python";
+		else if (!strcasecmp(ext, "js")) lang = "language-javascript";
+		else if (!strcasecmp(ext, "ts")) lang = "language-typescript";
+		else if (!strcasecmp(ext, "java")) lang = "language-java";
+		else if (!strcasecmp(ext, "go")) lang = "language-go";
+		else if (!strcasecmp(ext, "rs")) lang = "language-rust";
+		else if (!strcasecmp(ext, "rb")) lang = "language-ruby";
+		else if (!strcasecmp(ext, "html") || !strcasecmp(ext, "htm")) lang = "language-html";
+		else if (!strcasecmp(ext, "css")) lang = "language-css";
+		else if (!strcasecmp(ext, "json")) lang = "language-json";
+		else if (!strcasecmp(ext, "xml")) lang = "language-xml";
+		else if (!strcasecmp(ext, "sh") || !strcasecmp(ext, "bash")) lang = "language-bash";
+		else if (!strcasecmp(ext, "md") || !strcasecmp(ext, "markdown")) lang = "language-markdown";
+	}
 
-	fputs("<pre id=\"blob\">\n", fp);
+	fprintf(fp, "<pre id=\"blob\"><code class=\"%s\">\n", lang);
 
 	if (len > 0) {
 		for (i = 0, prev = 0; i < (size_t)len; i++) {
@@ -526,7 +872,7 @@ writeblobhtml(FILE *fp, const git_blob *blob)
 		}
 	}
 
-	fputs("</pre>\n", fp);
+	fputs("</code></pre>\n", fp);
 
 	return n;
 }
@@ -701,10 +1047,12 @@ writelogline(FILE *fp, struct commitinfo *ci)
 	fputs("</td><td class=\"num\" align=\"right\">", fp);
 	fprintf(fp, "%zu", ci->filecount);
 	fputs("</td><td class=\"num\" align=\"right\">", fp);
-	fprintf(fp, "+%zu", ci->addcount);
-	fputs("</td><td class=\"num\" align=\"right\">", fp);
-	fprintf(fp, "-%zu", ci->delcount);
-	fputs("</td></tr>\n", fp);
+	fputs("<span class=\"add-stat\">+", fp);
+	fprintf(fp, "%zu", ci->addcount);
+	fputs("</span></td><td class=\"num\" align=\"right\">", fp);
+	fputs("<span class=\"del-stat\">-", fp);
+	fprintf(fp, "%zu", ci->delcount);
+	fputs("</span></td></tr>\n", fp);
 }
 
 int
@@ -906,18 +1254,39 @@ writeblob(git_object *obj, const char *fpath, const char *filename, git_off_t fi
 
 	fp = efopen(fpath, "w");
 	writeheader(fp, filename);
-	fputs("<p> ", fp);
+	fputs("<p class=\"filename\"> ", fp);
 	xmlencode(fp, filename, strlen(filename));
 	fprintf(fp, " (%juB)", (uintmax_t)filesize);
-	fputs("</p><hr/>", fp);
+	fputs("</p>", fp);
 
-	if (git_blob_is_binary((git_blob *)obj)) {
-		fputs("<p>Binary file.</p>\n", fp);
-	} else {
-		lc = writeblobhtml(fp, (git_blob *)obj);
-		if (ferror(fp))
-			err(1, "fwrite");
-	}
+
+    if (git_blob_is_binary((git_blob *)obj)) {
+        fputs("<p class=\"binary-file\">Binary file.</p>\n", fp);
+    } else {
+#ifdef WITH_MD4C
+        /* README.md など Markdown なら md4c で HTML 描画 */
+        if (is_markdown_filename(filename)) {
+            const char *s = git_blob_rawcontent((git_blob *)obj);
+            git_off_t len = git_blob_rawsize((git_blob *)obj);
+            /* お好みでラッパー要素を追加（CSS: .markdown-body を当てやすく） */
+            fputs("<section class=\"panel markdown-body\">\n", fp);
+            if (render_markdown(fp, s, (size_t)len) != 0) {
+                /* 失敗時は従来のプレーン表示へフォールバック */
+                fputs("</section>\n", fp);
+                lc = writeblobhtml(fp, (git_blob *)obj, filename);
+            } else {
+                fputs("\n</section>\n", fp);
+                lc = 0; /* 行番号を出していないので 0 扱い */
+            }
+        } else
+#endif
+        {
+            lc = writeblobhtml(fp, (git_blob *)obj, filename);
+        }
+        if (ferror(fp))
+            err(1, "fwrite");
+    }
+
 	writefooter(fp);
 	fclose(fp);
 
@@ -978,8 +1347,57 @@ writefilestree(FILE *fp, git_tree *tree, const char *path)
 	char filepath[PATH_MAX], entrypath[PATH_MAX];
 	size_t count, i;
 	int lc, r, ret;
+	int depth = 0;
+	const char *p;
+
+	/* Calculate depth from path - entries in this directory */
+	if (*path) {
+		depth = 1;
+		for (p = path; *p; p++)
+			if (*p == '/') depth++;
+	}
 
 	count = git_tree_entrycount(tree);
+	
+	/* First pass: directories */
+	for (i = 0; i < count; i++) {
+		if (!(entry = git_tree_entry_byindex(tree, i)) ||
+		    !(entryname = git_tree_entry_name(entry)))
+			return -1;
+			
+		if (git_tree_entry_type(entry) != GIT_OBJ_TREE)
+			continue;
+			
+		joinpath(entrypath, sizeof(entrypath), path, entryname);
+		
+		/* Directory row */
+		fprintf(fp, "<tr class=\"dir-row\" data-path=\"%s\" data-parent=\"%s\" data-depth=\"%d\">", 
+		        entrypath, path, depth);
+		fputs("<td>", fp);
+		
+		/* Indentation */
+		for (int d = 0; d < depth; d++)
+			fputs("<span class=\"tree-indent\"></span>", fp);
+		
+		/* Toggle icon */
+		fputs("<span class=\"dir-toggle\">▸</span>", fp);
+		printfileicon(fp, entryname, 1);
+		fputs("<span class=\"dirname-clickable\">", fp);
+		xmlencode(fp, entryname, strlen(entryname));
+		fputs("/</span>", fp);
+		
+		fputs("</td><td>d---------</td><td class=\"num\" align=\"right\">-</td></tr>\n", fp);
+		
+		/* Recursively write directory contents */
+		if (!git_tree_entry_to_object(&obj, repo, entry)) {
+			ret = writefilestree(fp, (git_tree *)obj, entrypath);
+			git_object_free(obj);
+			if (ret)
+				return ret;
+		}
+	}
+	
+	/* Second pass: files */
 	for (i = 0; i < count; i++) {
 		if (!(entry = git_tree_entry_byindex(tree, i)) ||
 		    !(entryname = git_tree_entry_name(entry)))
@@ -991,19 +1409,11 @@ writefilestree(FILE *fp, git_tree *tree, const char *path)
 		if (r < 0 || (size_t)r >= sizeof(filepath))
 			errx(1, "path truncated: 'file/%s.html'", entrypath);
 
+		if (git_tree_entry_type(entry) == GIT_OBJ_TREE)
+			continue; /* Already handled in first pass */
+			
 		if (!git_tree_entry_to_object(&obj, repo, entry)) {
-			switch (git_object_type(obj)) {
-			case GIT_OBJ_BLOB:
-				break;
-			case GIT_OBJ_TREE:
-				/* NOTE: recurses */
-				ret = writefilestree(fp, (git_tree *)obj,
-				                     entrypath);
-				git_object_free(obj);
-				if (ret)
-					return ret;
-				continue;
-			default:
+			if (git_object_type(obj) != GIT_OBJ_BLOB) {
 				git_object_free(obj);
 				continue;
 			}
@@ -1011,13 +1421,23 @@ writefilestree(FILE *fp, git_tree *tree, const char *path)
 			filesize = git_blob_rawsize((git_blob *)obj);
 			lc = writeblob(obj, filepath, entryname, filesize);
 
-			fputs("<tr><td>", fp);
-			fputs(filemode(git_tree_entry_filemode(entry)), fp);
-			fprintf(fp, "</td><td><a href=\"%s", relpath);
+			fprintf(fp, "<tr class=\"file-row\" data-path=\"%s\" data-parent=\"%s\" data-depth=\"%d\">",
+			        entrypath, path, depth);
+			fputs("<td><a href=\"", fp);
+			fprintf(fp, "%s", relpath);
 			xmlencode(fp, filepath, strlen(filepath));
 			fputs("\">", fp);
-			xmlencode(fp, entrypath, strlen(entrypath));
-			fputs("</a></td><td class=\"num\" align=\"right\">", fp);
+			
+			/* Indentation */
+			for (int d = 0; d < depth; d++)
+				fputs("<span class=\"tree-indent\"></span>", fp);
+			
+			printfileicon(fp, entryname, 0);
+			xmlencode(fp, entryname, strlen(entryname));
+			fputs("</a></td><td>", fp);
+			fputs(filemode(git_tree_entry_filemode(entry)), fp);
+			
+			fputs("</td><td class=\"num\" align=\"right\">", fp);
 			if (lc > 0)
 				fprintf(fp, "%dL", lc);
 			else
@@ -1026,10 +1446,18 @@ writefilestree(FILE *fp, git_tree *tree, const char *path)
 			git_object_free(obj);
 		} else if (git_tree_entry_type(entry) == GIT_OBJ_COMMIT) {
 			/* commit object in tree is a submodule */
-			fprintf(fp, "<tr><td>m---------</td><td><a href=\"%sfile/.gitmodules.html\">",
+			fprintf(fp, "<tr class=\"file-row\" data-path=\"%s\" data-parent=\"%s\" data-depth=\"%d\">",
+			        entrypath, path, depth);
+			fprintf(fp, "<td><a href=\"%sfile/.gitmodules.html\">",
 				relpath);
-			xmlencode(fp, entrypath, strlen(entrypath));
-			fputs("</a></td><td class=\"num\" align=\"right\"></td></tr>\n", fp);
+			
+			/* Indentation */
+			for (int d = 0; d < depth; d++)
+				fputs("<span class=\"tree-indent\"></span>", fp);
+			
+			printfileicon(fp, entryname, 0);
+			xmlencode(fp, entryname, strlen(entryname));
+			fputs("</a></td><td>m---------</td><td class=\"num\" align=\"right\">@</td></tr>\n", fp);
 		}
 	}
 
@@ -1043,8 +1471,13 @@ writefiles(FILE *fp, const git_oid *id)
 	git_commit *commit = NULL;
 	int ret = -1;
 
+	/* File search box */
+	fputs("<div class=\"file-search\">\n", fp);
+	fputs("<input type=\"search\" id=\"file-search\" placeholder=\"Find file...\" aria-label=\"Search files\" />\n", fp);
+	fputs("</div>\n", fp);
+	
 	fputs("<table id=\"files\"><thead>\n<tr>"
-	      "<td><b>Mode</b></td><td><b>Name</b></td>"
+	      "<td><b>Name</b></td><td><b>Mode</b></td>"
 	      "<td class=\"num\" align=\"right\"><b>Size</b></td>"
 	      "</tr>\n</thead><tbody>\n", fp);
 
@@ -1053,6 +1486,122 @@ writefiles(FILE *fp, const git_oid *id)
 		ret = writefilestree(fp, tree, "");
 
 	fputs("</tbody></table>", fp);
+	
+	/* File tree and search scripts */
+	fputs("<script>\n"
+		"/* Directory toggle functionality */\n"
+		"(function(){\n"
+		"  var dirRows=document.querySelectorAll('.dir-row');\n"
+		"  var collapsedDirs={};\n"
+		"  \n"
+		"  function toggleDir(path,expand){\n"
+		"    var rows=document.querySelectorAll('[data-parent=\"'+path+'\"]');\n"
+		"    for(var i=0;i<rows.length;i++){\n"
+		"      if(expand){\n"
+		"        rows[i].style.display='';\n"
+		"        if(rows[i].classList.contains('dir-row')){\n"
+		"          var subpath=rows[i].getAttribute('data-path');\n"
+		"          if(!collapsedDirs[subpath]){\n"
+		"            toggleDir(subpath,true);\n"
+		"          }\n"
+		"        }\n"
+		"      }else{\n"
+		"        rows[i].style.display='none';\n"
+		"        if(rows[i].classList.contains('dir-row')){\n"
+		"          var subpath=rows[i].getAttribute('data-path');\n"
+		"          toggleDir(subpath,false);\n"
+		"        }\n"
+		"      }\n"
+		"    }\n"
+		"  }\n"
+		"  \n"
+		"  for(var i=0;i<dirRows.length;i++){\n"
+		"    dirRows[i].style.cursor='pointer';\n"
+		"    dirRows[i].addEventListener('click',function(e){\n"
+		"      var path=this.getAttribute('data-path');\n"
+		"      var toggle=this.querySelector('.dir-toggle');\n"
+		"      var isCollapsed=collapsedDirs[path];\n"
+		"      \n"
+		"      if(isCollapsed){\n"
+		"        delete collapsedDirs[path];\n"
+		"        toggle.textContent='▾';\n"
+		"        toggleDir(path,true);\n"
+		"      }else{\n"
+		"        collapsedDirs[path]=true;\n"
+		"        toggle.textContent='▸';\n"
+		"        toggleDir(path,false);\n"
+		"      }\n"
+		"    });\n"
+		"  }\n"
+		"  \n"
+		"  /* Initialize all directories as collapsed */\n"
+		"  for(var i=0;i<dirRows.length;i++){\n"
+		"    var path=dirRows[i].getAttribute('data-path');\n"
+		"    collapsedDirs[path]=true;\n"
+		"    toggleDir(path,false);\n"
+		"  }\n"
+		"})();\n"
+		"\n"
+		"/* File search */\n"
+		"(function(){\n"
+		"  var input=document.getElementById('file-search');\n"
+		"  var table=document.getElementById('files');\n"
+		"  if(!input||!table)return;\n"
+		"  var allRows=table.querySelectorAll('tbody tr');\n"
+		"  \n"
+		"  input.addEventListener('input',function(){\n"
+		"    var filter=input.value.toLowerCase();\n"
+		"    if(!filter){\n"
+		"      /* Reset visibility */\n"
+		"      for(var i=0;i<allRows.length;i++){\n"
+		"        allRows[i].style.display='';\n"
+		"      }\n"
+		"      return;\n"
+		"    }\n"
+		"    \n"
+		"    /* Search and show matching rows with their parents */\n"
+		"    var visiblePaths={};\n"
+		"    for(var i=0;i<allRows.length;i++){\n"
+		"      var row=allRows[i];\n"
+		"      var nameCell=row.querySelector('td:nth-child(1)');\n"
+		"      if(!nameCell)continue;\n"
+		"      \n"
+		"      var text=nameCell.textContent||nameCell.innerText;\n"
+		"      var path=row.getAttribute('data-path')||'';\n"
+		"      \n"
+		"      if(text.toLowerCase().indexOf(filter)>-1){\n"
+		"        row.style.display='';\n"
+		"        visiblePaths[path]=true;\n"
+		"        /* Show parent directories */\n"
+		"        var parts=path.split('/');\n"
+		"        var parentPath='';\n"
+		"        for(var j=0;j<parts.length-1;j++){\n"
+		"          parentPath+=parts[j];\n"
+		"          visiblePaths[parentPath]=true;\n"
+		"          parentPath+='/';\n"
+		"        }\n"
+		"      }else{\n"
+		"        row.style.display='none';\n"
+		"      }\n"
+		"    }\n"
+		"    \n"
+		"    /* Show visible parent directories */\n"
+		"    for(var i=0;i<allRows.length;i++){\n"
+		"      var path=allRows[i].getAttribute('data-path');\n"
+		"      if(path&&visiblePaths[path]){\n"
+		"        allRows[i].style.display='';\n"
+		"      }\n"
+		"    }\n"
+		"  });\n"
+		"  \n"
+		"  /* Keyboard shortcut: / to focus search */\n"
+		"  document.addEventListener('keydown',function(e){\n"
+		"    if(e.key==='/'&&document.activeElement!==input){\n"
+		"      e.preventDefault();input.focus();\n"
+		"    }\n"
+		"  });\n"
+		"})();\n"
+		"</script>\n", fp);
 
 	git_commit_free(commit);
 	git_tree_free(tree);
@@ -1336,6 +1885,62 @@ main(int argc, char *argv[])
 		if (chmod(cachefile,
 		    (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH) & ~mask))
 			err(1, "chmod: '%s'", cachefile);
+	}
+
+	/* copy asset files (style.css, logo.png, favicon.png) to parent directory */
+	{
+		const char *assets[] = {"style.css", "logo.png", "favicon.png"};
+		const char *search_paths[] = {
+			".",                          /* current directory */
+			"/usr/local/share/stagit",    /* system install */
+			"/usr/share/stagit",          /* system install */
+			NULL
+		};
+		FILE *src, *dst;
+		char srcpath[PATH_MAX], dstpath[PATH_MAX];
+		unsigned char copybuf[BUFSIZ];
+		size_t nread;
+		int j, k, found;
+		
+		for (j = 0; j < 3; j++) {
+			/* destination is parent directory */
+			snprintf(dstpath, sizeof(dstpath), "../%s", assets[j]);
+			
+			/* skip if file already exists in parent directory */
+			if (access(dstpath, F_OK) == 0)
+				continue;
+			
+			found = 0;
+			
+			/* try to find the asset file */
+			for (k = 0; search_paths[k] && !found; k++) {
+				snprintf(srcpath, sizeof(srcpath), "%s/%s", 
+				         search_paths[k], assets[j]);
+				
+				if ((src = fopen(srcpath, "rb"))) {
+					if ((dst = fopen(dstpath, "wb"))) {
+						while ((nread = fread(copybuf, 1, sizeof(copybuf), src)) > 0) {
+							if (fwrite(copybuf, 1, nread, dst) != nread) {
+								fprintf(stderr, "warning: failed to write %s\n", dstpath);
+								break;
+							}
+						}
+						fclose(dst);
+						found = 1;
+					}
+					fclose(src);
+				}
+			}
+			
+			if (!found && j == 0) {
+				/* style.css is critical, write a minimal default */
+				if ((dst = fopen(dstpath, "w"))) {
+					fputs("/* stagit default style */\n"
+					      "body { font-family: monospace; }\n", dst);
+					fclose(dst);
+				}
+			}
+		}
 	}
 
 	/* cleanup */
