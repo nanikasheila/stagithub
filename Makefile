@@ -32,7 +32,7 @@ MAN1 = \
 DOC = \
 	LICENSE\
 	README
-HDR = compat.h
+HDR = compat.h md4c-wrapper.h
 
 COMPATOBJ = \
 	reallocarray.o\

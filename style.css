@@ -229,7 +229,7 @@ header, .header, .repo-header {
    ===== */
 table {
   width: 100%;
-  border-collapse: collapse;
+  /*border-collapse: collapse;*/
   border: 1px solid var(--border);
   background: var(--bg);
   border-radius: var(--radius-small);
@@ -250,6 +250,10 @@ thead th {
   z-index: 1;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+thead tr td {
+	padding: 0 1em;
 }
 
 tbody td {
@@ -286,8 +290,8 @@ td.meta, td.date, td.time, td.hash, .meta {
 section, .panel, .box, .content {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  padding: 16px 18px;
+  border-radius: var(--radius-small);
+  padding: 24px;
   box-shadow: var(--shadow-1);
   margin-block: 16px;
 }
@@ -685,4 +689,15 @@ hr {
 .dirname-clickable {
   font-weight: 600;
   color: var(--text);
+}
+
+/* =====
+   README section (for index.html)
+   ===== */
+.readme-section {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-medium);
+  padding: 24px;
+  margin-bottom: 24px;
 }

@@ -8,6 +8,8 @@
 
 #include <git2.h>
 
+#include "md4c-wrapper.h"
+
 static git_repository *repo;
 
 static const char *relpath = "";
@@ -112,9 +114,48 @@ writeheader(FILE *fp)
 }
 
 void
+write_readme_section(FILE *fp, const char *readme_path)
+{
+#ifdef WITH_MD4C
+	FILE *readme_fp;
+	char *content = NULL;
+	size_t size = 0, capacity = 0;
+	int c;
+	
+	if (!(readme_fp = fopen(readme_path, "r")))
+		return;
+	
+	/* Read entire file into buffer */
+	while ((c = fgetc(readme_fp)) != EOF) {
+		if (size >= capacity) {
+			capacity = capacity ? capacity * 2 : 4096;
+			if (!(content = realloc(content, capacity)))
+				err(1, "realloc");
+		}
+		content[size++] = c;
+	}
+	fclose(readme_fp);
+	
+	if (size > 0) {
+		fputs("<div class=\"readme-section\">\n", fp);
+		fputs("<div class=\"readme-content\">\n", fp);
+		render_markdown(fp, content, size);
+		fputs("</div>\n</div>\n", fp);
+	}
+	
+	free(content);
+#endif
+}
+
+void
 writefooter(FILE *fp)
 {
-	fputs("</tbody>\n</table>\n</div></main>\n", fp);
+	fputs("</tbody>\n</table>\n", fp);
+	
+	/* Try to display README.md from current directory */
+	write_readme_section(fp, "README.md");
+	
+	fputs("</div></main>\n", fp);
 	
 	/* JavaScript for theme toggle and search */
 	fputs("<script>\n"
