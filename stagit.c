@@ -474,12 +474,37 @@ writeheader(FILE *fp, const char *title)
 	/* mermaid.js for diagram rendering */
 	fputs("<script type=\"module\">\n", fp);
 	fputs("import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n", fp);
-	fputs("mermaid.initialize({ startOnLoad: true, theme: 'default' });\n", fp);
+	fputs("const decodeHTML = function(html) {\n", fp);
+	fputs("  const txt = document.createElement('textarea');\n", fp);
+	fputs("  txt.innerHTML = html;\n", fp);
+	fputs("  return txt.value;\n", fp);
+	fputs("};\n", fp);
+	fputs("const currentTheme = localStorage.getItem('theme') || '';\n", fp);
+	fputs("const mermaidTheme = currentTheme === 'theme-dark' ? 'dark' : 'default';\n", fp);
+	fputs("document.addEventListener('DOMContentLoaded', function() {\n", fp);
+	fputs("  document.querySelectorAll('.mermaid').forEach(function(el) {\n", fp);
+	fputs("    const decoded = decodeHTML(el.textContent);\n", fp);
+	fputs("    el.textContent = decoded;\n", fp);
+	fputs("    el.setAttribute('data-original', decoded);\n", fp);
+	fputs("  });\n", fp);
+	fputs("  mermaid.initialize({ startOnLoad: true, theme: mermaidTheme });\n", fp);
+	fputs("});\n", fp);
+	fputs("window.updateMermaidTheme = function(isDark) {\n", fp);
+	fputs("  mermaid.initialize({ startOnLoad: true, theme: isDark ? 'dark' : 'default' });\n", fp);
+	fputs("  document.querySelectorAll('.mermaid').forEach(function(el) {\n", fp);
+	fputs("    const code = el.getAttribute('data-original') || el.textContent;\n", fp);
+	fputs("    el.textContent = code;\n", fp);
+	fputs("    el.removeAttribute('data-processed');\n", fp);
+	fputs("    mermaid.run({ nodes: [el] });\n", fp);
+	fputs("  });\n", fp);
+	fputs("};\n", fp);
 	fputs("</script>\n", fp);
 	fputs("</head>\n<body>\n", fp);
 	
 	/* Theme toggle button */
 	fputs("<button id=\"theme-toggle\" aria-label=\"Toggle dark mode\" title=\"Toggle theme\">🌓</button>\n", fp);
+	/* Scroll to top button */
+	fputs("<button id=\"scroll-top\" aria-label=\"Scroll to top\" title=\"Back to top\">\u2191</button>\n", fp);
 	
 	/* Header */
 	fputs("<header class=\"repo-header\"><div class=\"container\">\n", fp);
@@ -565,7 +590,8 @@ writeheader(FILE *fp, const char *title)
 	/* Breadcrumb navigation */
 	fputs("<nav aria-label=\"Breadcrumb\" class=\"container\" style=\"padding-top:16px;\">\n", fp);
 	fputs("<ol class=\"breadcrumb\">\n", fp);
-	fprintf(fp, "<li><a href=\"%s../index.html\">Home</a></li>\n", relpath);
+	fprintf(fp, "<li><a href=\"%s../index.html\">📚 Repositories</a></li>\n", relpath);
+	fputs("<li><a href=\"\"></a><span id=\"breadcrumb-repo\"></span></li>\n", fp);
 	fputs("<li><span id=\"breadcrumb-page\"></span></li>\n", fp);
 	fputs("</ol>\n</nav>\n", fp);
 	
@@ -586,6 +612,9 @@ writeheader(FILE *fp, const char *title)
 		"      var next=current==='theme-dark'?'theme-light':'theme-dark';\n"
 		"      body.className=next;\n"
 		"      localStorage.setItem('theme',next);\n"
+		"      if(typeof window.updateMermaidTheme==='function'){\n"
+		"        window.updateMermaidTheme(next==='theme-dark');\n"
+		"      }\n"
 		"    });\n"
 		"  }\n"
 		"})();\n"
@@ -607,12 +636,47 @@ writeheader(FILE *fp, const char *title)
 		"    }\n"
 		"  });\n"
 		"})();\n"
+		"/* Scroll to top button */\n"
+		"(function(){\n"
+		"  var btn=document.getElementById('scroll-top');\n"
+		"  if(!btn)return;\n"
+		"  window.addEventListener('scroll',function(){\n"
+		"    if(window.pageYOffset>300){btn.classList.add('visible');}\n"
+		"    else{btn.classList.remove('visible');}\n"
+		"  });\n"
+		"  btn.addEventListener('click',function(){\n"
+		"    window.scrollTo({top:0,behavior:'smooth'});\n"
+		"  });\n"
+		"})();\n"
+		"/* Code block copy buttons */\n"
+		"document.addEventListener('DOMContentLoaded',function(){\n"
+		"  document.querySelectorAll('pre').forEach(function(pre){\n"
+		"    if(pre.classList.contains('mermaid'))return;\n"
+		"    var code=pre.querySelector('code');\n"
+		"    if(!code)return;\n"
+		"    var btn=document.createElement('button');\n"
+		"    btn.className='code-copy-btn';\n"
+		"    btn.textContent='Copy';\n"
+		"    btn.setAttribute('aria-label','Copy code');\n"
+		"    pre.style.position='relative';\n"
+		"    pre.appendChild(btn);\n"
+		"    btn.addEventListener('click',function(){\n"
+		"      var text=code.textContent;\n"
+		"      if(navigator.clipboard&&navigator.clipboard.writeText){\n"
+		"        navigator.clipboard.writeText(text).then(function(){\n"
+		"          btn.textContent='✓';setTimeout(function(){btn.textContent='Copy';},1200);\n"
+		"        });\n"
+		"      }\n"
+		"    });\n"
+		"  });\n"
+		"});\n"
 		"/* Set active page and breadcrumb */\n"
 		"(function(){\n"
 		"  var path=window.location.pathname;\n"
 		"  var filename=path.split('/').pop();\n"
 		"  var links=document.querySelectorAll('.nav__link');\n"
 		"  var breadcrumb=document.getElementById('breadcrumb-page');\n"
+		"  var breadcrumbRepo=document.getElementById('breadcrumb-repo');\n"
 		"  var pageName='';\n"
 		"  for(var i=0;i<links.length;i++){\n"
 		"    var link=links[i];\n"
@@ -622,8 +686,10 @@ writeheader(FILE *fp, const char *title)
 		"      break;\n"
 		"    }\n"
 		"  }\n"
+		"  var titleParts=document.title.split(' - ');\n"
 		"  if(breadcrumb&&pageName){breadcrumb.textContent=pageName;}\n"
-		"  else if(breadcrumb){breadcrumb.textContent=document.title.split(' - ')[0];}\n"
+		"  else if(breadcrumb&&titleParts[0]){breadcrumb.textContent=titleParts[0];}\n"
+		"  if(breadcrumbRepo&&titleParts[1]){breadcrumbRepo.textContent=titleParts[1];}\n"
 		"})();\n"
 		"/* highlight.js initialization */\n"
 		"if(typeof hljs!=='undefined'){hljs.highlightAll();}\n"

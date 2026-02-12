@@ -86,12 +86,37 @@ writeheader(FILE *fp)
 	/* mermaid.js for diagram rendering */
 	fputs("<script type=\"module\">\n", fp);
 	fputs("import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';\n", fp);
-	fputs("mermaid.initialize({ startOnLoad: true, theme: 'default' });\n", fp);
+	fputs("const decodeHTML = function(html) {\n", fp);
+	fputs("  const txt = document.createElement('textarea');\n", fp);
+	fputs("  txt.innerHTML = html;\n", fp);
+	fputs("  return txt.value;\n", fp);
+	fputs("};\n", fp);
+	fputs("const currentTheme = localStorage.getItem('theme') || '';\n", fp);
+	fputs("const mermaidTheme = currentTheme === 'theme-dark' ? 'dark' : 'default';\n", fp);
+	fputs("document.addEventListener('DOMContentLoaded', function() {\n", fp);
+	fputs("  document.querySelectorAll('.mermaid').forEach(function(el) {\n", fp);
+	fputs("    const decoded = decodeHTML(el.textContent);\n", fp);
+	fputs("    el.textContent = decoded;\n", fp);
+	fputs("    el.setAttribute('data-original', decoded);\n", fp);
+	fputs("  });\n", fp);
+	fputs("  mermaid.initialize({ startOnLoad: true, theme: mermaidTheme });\n", fp);
+	fputs("});\n", fp);
+	fputs("window.updateMermaidTheme = function(isDark) {\n", fp);
+	fputs("  mermaid.initialize({ startOnLoad: true, theme: isDark ? 'dark' : 'default' });\n", fp);
+	fputs("  document.querySelectorAll('.mermaid').forEach(function(el) {\n", fp);
+	fputs("    const code = el.getAttribute('data-original') || el.textContent;\n", fp);
+	fputs("    el.textContent = code;\n", fp);
+	fputs("    el.removeAttribute('data-processed');\n", fp);
+	fputs("    mermaid.run({ nodes: [el] });\n", fp);
+	fputs("  });\n", fp);
+	fputs("};\n", fp);
 	fputs("</script>\n", fp);
 	fputs("</head>\n<body>\n", fp);
 	
 	/* Theme toggle button */
 	fputs("<button id=\"theme-toggle\" aria-label=\"Toggle dark mode\" title=\"Toggle theme\">🌓</button>\n", fp);
+	/* Scroll to top button */
+	fputs("<button id=\"scroll-top\" aria-label=\"Scroll to top\" title=\"Back to top\">\u2191</button>\n", fp);
 	
 	/* Header */
 	fputs("<header class=\"repo-header\"><div class=\"container\">\n", fp);
@@ -176,9 +201,46 @@ writefooter(FILE *fp)
 		"      var next=current==='theme-dark'?'theme-light':'theme-dark';\n"
 		"      body.className=next;\n"
 		"      localStorage.setItem('theme',next);\n"
+		"      if(typeof window.updateMermaidTheme==='function'){\n"
+		"        window.updateMermaidTheme(next==='theme-dark');\n"
+		"      }\n"
 		"    });\n"
 		"  }\n"
 		"})();\n"
+		"/* Scroll to top button */\n"
+		"(function(){\n"
+		"  var btn=document.getElementById('scroll-top');\n"
+		"  if(!btn)return;\n"
+		"  window.addEventListener('scroll',function(){\n"
+		"    if(window.pageYOffset>300){btn.classList.add('visible');}\n"
+		"    else{btn.classList.remove('visible');}\n"
+		"  });\n"
+		"  btn.addEventListener('click',function(){\n"
+		"    window.scrollTo({top:0,behavior:'smooth'});\n"
+		"  });\n"
+		"})();\n"
+		"/* Code block copy buttons */\n"
+		"document.addEventListener('DOMContentLoaded',function(){\n"
+		"  document.querySelectorAll('pre').forEach(function(pre){\n"
+		"    if(pre.classList.contains('mermaid'))return;\n"
+		"    var code=pre.querySelector('code');\n"
+		"    if(!code)return;\n"
+		"    var btn=document.createElement('button');\n"
+		"    btn.className='code-copy-btn';\n"
+		"    btn.textContent='Copy';\n"
+		"    btn.setAttribute('aria-label','Copy code');\n"
+		"    pre.style.position='relative';\n"
+		"    pre.appendChild(btn);\n"
+		"    btn.addEventListener('click',function(){\n"
+		"      var text=code.textContent;\n"
+		"      if(navigator.clipboard&&navigator.clipboard.writeText){\n"
+		"        navigator.clipboard.writeText(text).then(function(){\n"
+		"          btn.textContent='✓';setTimeout(function(){btn.textContent='Copy';},1200);\n"
+		"        });\n"
+		"      }\n"
+		"    });\n"
+		"  });\n"
+		"});\n"
 		"/* Repository search */\n"
 		"(function(){\n"
 		"  var input=document.getElementById('repo-search');\n"
